@@ -9,7 +9,8 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  # ── Windows: 客户端 + 服务端 + Hook DLL ──────────────────────────────
+  build-windows:
     runs-on: windows-latest
 
     steps:
@@ -22,17 +23,74 @@ jobs:
       - name: Build Release
         run: cmake --build build --config Release
 
-      - name: Prepare release artifacts
-        shell: pwsh
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-binaries
+          path: |
+            build/Release/war3-platform.exe
+            build/Release/war3-lobby-server.exe
+            build/Release/war3hook.dll
+
+  # ── Linux: 仅服务端 ──────────────────────────────────────────────────
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build server
+        run: cmake --build build --target war3-lobby-server
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-binaries
+          path: build/war3-lobby-server
+
+  # ── 发布 Release ─────────────────────────────────────────────────────
+  release:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-binaries
+          path: win
+
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-binaries
+          path: linux
+
+      - name: Prepare release packages
         run: |
-          New-Item -ItemType Directory -Force -Path artifact
-          # New platform binaries
-          Copy-Item build/Release/war3-platform.exe artifact/
-          Copy-Item build/Release/war3-lobby-server.exe artifact/
-          Copy-Item build/Release/war3hook.dll artifact/
-          Copy-Item README.md artifact/
-          Copy-Item docs/PROTOCOL.md artifact/
-          Compress-Archive -Path artifact/* -DestinationPath war3-platform-${{ github.ref_name }}.zip
+          # Windows zip
+          mkdir -p pkg-win
+          cp win/war3-platform.exe pkg-win/
+          cp win/war3-lobby-server.exe pkg-win/
+          cp win/war3hook.dll pkg-win/
+          cp README.md pkg-win/
+          cp docs/PROTOCOL.md pkg-win/
+          cd pkg-win && zip -r ../war3-platform-windows-${{ github.ref_name }}.zip . && cd ..
+
+          # Linux tar.gz (仅服务端)
+          mkdir -p pkg-linux
+          cp linux/war3-lobby-server pkg-linux/
+          chmod +x pkg-linux/war3-lobby-server
+          cp README.md pkg-linux/
+          cp docs/PROTOCOL.md pkg-linux/
+          cd pkg-linux && tar czf ../war3-lobby-server-linux-${{ github.ref_name }}.tar.gz . && cd ..
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -43,21 +101,20 @@ jobs:
 
             一个为魔兽争霸3玩家打造的对战平台，让不同网络的玩家可以像在局域网一样联机。
 
-            ### 包含文件
-            - `war3-platform.exe` – 客户端 (GUI)
-            - `war3-lobby-server.exe` – 服务端
-            - `war3hook.dll` – Hook DLL (自动注入)
+            ### 下载说明
+            | 文件 | 说明 |
+            |------|------|
+            | `war3-platform-windows-*.zip` | Windows 完整包（客户端 + 服务端 + Hook DLL） |
+            | `war3-lobby-server-linux-*.tar.gz` | Linux 服务端 |
 
             ### 快速开始
-            1. 在一台公网服务器上运行 `war3-lobby-server.exe`
+            1. 在一台服务器上运行 `war3-lobby-server`（支持 Windows / Linux）
             2. 玩家运行 `war3-platform.exe`，输入服务器地址和用户名登录
             3. 创建或加入房间，点击"启动游戏"即可联机
 
             详见 README.md
           files: |
-            war3-platform-${{ github.ref_name }}.zip
-            artifact/war3-platform.exe
-            artifact/war3-lobby-server.exe
-            artifact/war3hook.dll
+            war3-platform-windows-${{ github.ref_name }}.zip
+            war3-lobby-server-linux-${{ github.ref_name }}.tar.gz
           draft: false
           prerelease: false
