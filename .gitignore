@@ -1,0 +1,9 @@
+build/
+*.exe
+*.dll
+*.obj
+*.o
+*.cfg
+.vs/
+CMakeSettings.json
+out/
