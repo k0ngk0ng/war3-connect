@@ -5,12 +5,12 @@
 TargetConfig g_config = {0};
 
 /* Get the directory where this DLL resides */
-static BOOL GetDllDirectory(char *buf, DWORD bufSize)
+static BOOL GetThisDllDirectory(char *buf, DWORD bufSize)
 {
     HMODULE hMod = NULL;
     GetModuleHandleExA(
         GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-        (LPCSTR)GetDllDirectory, &hMod);
+        (LPCSTR)GetThisDllDirectory, &hMod);
     if (!hMod) return FALSE;
 
     DWORD len = GetModuleFileNameA(hMod, buf, bufSize);
@@ -28,7 +28,7 @@ int Config_Load(TargetConfig *cfg)
     char path[MAX_PATH];
     cfg->count = 0;
 
-    if (!GetDllDirectory(path, MAX_PATH)) {
+    if (!GetThisDllDirectory(path, MAX_PATH)) {
         OutputDebugStringA("[war3hook] Failed to get DLL directory\n");
         return 0;
     }
