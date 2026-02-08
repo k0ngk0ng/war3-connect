@@ -1,9 +1,13 @@
 build/
+build_*/
 *.exe
 *.dll
 *.obj
 *.o
 *.cfg
 .vs/
+.vscode/
 CMakeSettings.json
+CMakeUserPresets.json
 out/
+PLAN.md

@@ -26,28 +26,38 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path artifact
-          Copy-Item build/Release/war3-connect.exe artifact/
+          # New platform binaries
+          Copy-Item build/Release/war3-platform.exe artifact/
+          Copy-Item build/Release/war3-lobby-server.exe artifact/
           Copy-Item build/Release/war3hook.dll artifact/
           Copy-Item README.md artifact/
-          Compress-Archive -Path artifact/* -DestinationPath war3-connect-${{ github.ref_name }}.zip
+          Copy-Item docs/PROTOCOL.md artifact/
+          Compress-Archive -Path artifact/* -DestinationPath war3-platform-${{ github.ref_name }}.zip
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: War3 Connect ${{ github.ref_name }}
+          name: War3 对战平台 ${{ github.ref_name }}
           body: |
-            ## War3 Connect ${{ github.ref_name }}
+            ## War3 对战平台 ${{ github.ref_name }}
 
-            将魔兽争霸3局域网广播重定向到指定IP，实现跨互联网联机。
+            一个为魔兽争霸3玩家打造的对战平台，让不同网络的玩家可以像在局域网一样联机。
 
-            ### 使用方法
-            1. 解压，将 `war3-connect.exe` 和 `war3hook.dll` 放到 War3 目录
-            2. 运行：`war3-connect.exe -ip 对方IP地址`
+            ### 包含文件
+            - `war3-platform.exe` – 客户端 (GUI)
+            - `war3-lobby-server.exe` – 服务端
+            - `war3hook.dll` – Hook DLL (自动注入)
+
+            ### 快速开始
+            1. 在一台公网服务器上运行 `war3-lobby-server.exe`
+            2. 玩家运行 `war3-platform.exe`，输入服务器地址和用户名登录
+            3. 创建或加入房间，点击"启动游戏"即可联机
 
             详见 README.md
           files: |
-            war3-connect-${{ github.ref_name }}.zip
-            artifact/war3-connect.exe
+            war3-platform-${{ github.ref_name }}.zip
+            artifact/war3-platform.exe
+            artifact/war3-lobby-server.exe
             artifact/war3hook.dll
           draft: false
           prerelease: false
