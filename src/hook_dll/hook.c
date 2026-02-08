@@ -3,11 +3,40 @@
 #include <ws2tcpip.h>
 #include <stdio.h>
 
-/* ── Original function pointer ──────────────────────────────────────────── */
+/*
+ * Inline Hook (Trampoline) for ws2_32.dll!sendto
+ *
+ * Strategy:
+ *   1. Save the first 5 bytes of the real sendto()
+ *   2. Overwrite them with a JMP to our Hooked_sendto()
+ *   3. Build a "trampoline" that executes the saved 5 bytes
+ *      then JMPs back to sendto+5, so we can call the original.
+ *
+ * This works regardless of how War3 calls sendto (IAT, GetProcAddress,
+ * wsock32 forwarding, etc.) because we patch the actual function body.
+ *
+ * x86 only (32-bit). JMP rel32 = 0xE9 + 4-byte relative offset.
+ */
+
+#define JMP_SIZE 5  /* sizeof(E9 xx xx xx xx) */
+
 typedef int (WSAAPI *sendto_fn)(SOCKET, const char*, int, int,
                                  const struct sockaddr*, int);
-static sendto_fn  g_originalSendto = NULL;
-static sendto_fn *g_iatSlot        = NULL;   /* pointer to the IAT entry */
+
+/* ── Globals ────────────────────────────────────────────────────────────── */
+static BYTE   g_originalBytes[JMP_SIZE] = {0};  /* saved prologue        */
+static BYTE  *g_sendtoAddr              = NULL;  /* address of real sendto */
+static BOOL   g_hookInstalled           = FALSE;
+
+/*
+ * Trampoline: a small executable buffer that contains:
+ *   [0..4]  the original 5 bytes of sendto
+ *   [5..9]  JMP back to sendto+5
+ *
+ * Allocated with VirtualAlloc(PAGE_EXECUTE_READWRITE).
+ */
+static BYTE  *g_trampoline = NULL;
+static sendto_fn g_trampolineFn = NULL;  /* callable pointer to trampoline */
 
 /* War3 LAN broadcast port */
 #define WAR3_PORT 6112
@@ -22,116 +51,126 @@ static int WSAAPI Hooked_sendto(
         USHORT port = ntohs(sin->sin_port);
 
         if (sin->sin_addr.s_addr == INADDR_BROADCAST && port == WAR3_PORT) {
+            char dbg[256];
+            snprintf(dbg, sizeof(dbg),
+                     "[war3hook] Intercepted broadcast to 255.255.255.255:%d, "
+                     "redirecting to %d target(s)\n", port, g_config.count);
+            OutputDebugStringA(dbg);
+
             /* Send to each configured target IP */
             for (int i = 0; i < g_config.count; i++) {
                 struct sockaddr_in target = *sin;
                 target.sin_addr = g_config.addrs[i];
 
-                g_originalSendto(s, buf, len, flags,
-                                 (const struct sockaddr *)&target, sizeof(target));
+                g_trampolineFn(s, buf, len, flags,
+                               (const struct sockaddr *)&target,
+                               sizeof(target));
             }
             /* Also send to original broadcast so LAN still works */
-            return g_originalSendto(s, buf, len, flags, to, tolen);
+            return g_trampolineFn(s, buf, len, flags, to, tolen);
         }
     }
-    return g_originalSendto(s, buf, len, flags, to, tolen);
+    return g_trampolineFn(s, buf, len, flags, to, tolen);
 }
 
-/* ── IAT walking helpers ────────────────────────────────────────────────── */
-static PIMAGE_IMPORT_DESCRIPTOR GetImportDescriptor(HMODULE hModule)
+/* ── Helper: write a JMP rel32 at `src` targeting `dst` ─────────────────── */
+static void WriteJump(BYTE *src, BYTE *dst)
 {
-    PBYTE base = (PBYTE)hModule;
-    PIMAGE_DOS_HEADER dos = (PIMAGE_DOS_HEADER)base;
-    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return NULL;
-
-    PIMAGE_NT_HEADERS nt = (PIMAGE_NT_HEADERS)(base + dos->e_lfanew);
-    if (nt->Signature != IMAGE_NT_SIGNATURE) return NULL;
-
-    DWORD importRVA = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress;
-    if (importRVA == 0) return NULL;
-
-    return (PIMAGE_IMPORT_DESCRIPTOR)(base + importRVA);
-}
-
-static sendto_fn* FindSendtoIATEntry(HMODULE hModule)
-{
-    PBYTE base = (PBYTE)hModule;
-    PIMAGE_IMPORT_DESCRIPTOR imp = GetImportDescriptor(hModule);
-    if (!imp) return NULL;
-
-    HMODULE hWs2 = GetModuleHandleA("ws2_32.dll");
-    if (!hWs2) hWs2 = GetModuleHandleA("WS2_32.dll");
-    if (!hWs2) hWs2 = GetModuleHandleA("WS2_32.DLL");
-
-    FARPROC realSendto = GetProcAddress(hWs2, "sendto");
-    if (!realSendto) {
-        OutputDebugStringA("[war3hook] Cannot find sendto in ws2_32.dll\n");
-        return NULL;
-    }
-
-    for (; imp->Name; imp++) {
-        const char *dllName = (const char *)(base + imp->Name);
-        if (_stricmp(dllName, "ws2_32.dll") != 0 &&
-            _stricmp(dllName, "wsock32.dll") != 0)
-            continue;
-
-        PIMAGE_THUNK_DATA origThunk = (PIMAGE_THUNK_DATA)(base + imp->OriginalFirstThunk);
-        PIMAGE_THUNK_DATA iatThunk  = (PIMAGE_THUNK_DATA)(base + imp->FirstThunk);
-
-        for (; origThunk->u1.AddressOfData; origThunk++, iatThunk++) {
-            /* Compare by address: if the IAT currently points to the real sendto */
-            if ((FARPROC)iatThunk->u1.Function == realSendto) {
-                return (sendto_fn *)&iatThunk->u1.Function;
-            }
-        }
-    }
-    return NULL;
+    src[0] = 0xE9;  /* JMP rel32 */
+    *(DWORD *)(src + 1) = (DWORD)(dst - src - JMP_SIZE);
 }
 
 /* ── Public API ─────────────────────────────────────────────────────────── */
 BOOL Hook_Install(void)
 {
-    HMODULE hExe = GetModuleHandleA(NULL);
+    if (g_hookInstalled) return TRUE;
 
     /* Make sure winsock is loaded */
     WSADATA wsa;
     WSAStartup(MAKEWORD(2, 2), &wsa);
 
-    g_iatSlot = FindSendtoIATEntry(hExe);
-    if (!g_iatSlot) {
-        OutputDebugStringA("[war3hook] sendto IAT entry not found, trying wsock32 fallback\n");
-        /* War3 might use wsock32.dll which forwards to ws2_32.dll.
-           Try to hook wsock32's sendto as well. */
-        HMODULE hWsock = GetModuleHandleA("wsock32.dll");
-        if (hWsock) {
-            /* For wsock32, we still hook the main exe's IAT */
-        }
-        /* If still not found, try Detours-style inline hook as fallback:
-           For simplicity we just report failure here. */
-        OutputDebugStringA("[war3hook] HOOK FAILED: could not locate sendto in IAT\n");
+    /* Get the real sendto address from ws2_32.dll */
+    HMODULE hWs2 = GetModuleHandleA("ws2_32.dll");
+    if (!hWs2) {
+        hWs2 = LoadLibraryA("ws2_32.dll");
+    }
+    if (!hWs2) {
+        OutputDebugStringA("[war3hook] Cannot load ws2_32.dll\n");
         return FALSE;
     }
 
-    g_originalSendto = *g_iatSlot;
+    g_sendtoAddr = (BYTE *)GetProcAddress(hWs2, "sendto");
+    if (!g_sendtoAddr) {
+        OutputDebugStringA("[war3hook] Cannot find sendto in ws2_32.dll\n");
+        return FALSE;
+    }
 
+    {
+        char dbg[256];
+        snprintf(dbg, sizeof(dbg), "[war3hook] sendto @ 0x%p\n", g_sendtoAddr);
+        OutputDebugStringA(dbg);
+    }
+
+    /* Allocate executable memory for the trampoline */
+    g_trampoline = (BYTE *)VirtualAlloc(NULL, JMP_SIZE + JMP_SIZE,
+                                         MEM_COMMIT | MEM_RESERVE,
+                                         PAGE_EXECUTE_READWRITE);
+    if (!g_trampoline) {
+        OutputDebugStringA("[war3hook] VirtualAlloc for trampoline failed\n");
+        return FALSE;
+    }
+
+    /* Save original bytes */
+    memcpy(g_originalBytes, g_sendtoAddr, JMP_SIZE);
+
+    /* Build trampoline:
+     *   [0..4] = original 5 bytes of sendto
+     *   [5..9] = JMP (sendto + 5)
+     */
+    memcpy(g_trampoline, g_originalBytes, JMP_SIZE);
+    WriteJump(g_trampoline + JMP_SIZE, g_sendtoAddr + JMP_SIZE);
+
+    g_trampolineFn = (sendto_fn)g_trampoline;
+
+    /* Patch sendto: overwrite first 5 bytes with JMP to Hooked_sendto */
     DWORD oldProtect;
-    VirtualProtect(g_iatSlot, sizeof(void*), PAGE_READWRITE, &oldProtect);
-    *g_iatSlot = (sendto_fn)Hooked_sendto;
-    VirtualProtect(g_iatSlot, sizeof(void*), oldProtect, &oldProtect);
+    if (!VirtualProtect(g_sendtoAddr, JMP_SIZE, PAGE_EXECUTE_READWRITE, &oldProtect)) {
+        OutputDebugStringA("[war3hook] VirtualProtect failed on sendto\n");
+        VirtualFree(g_trampoline, 0, MEM_RELEASE);
+        g_trampoline = NULL;
+        return FALSE;
+    }
 
-    OutputDebugStringA("[war3hook] sendto hook installed successfully!\n");
+    WriteJump(g_sendtoAddr, (BYTE *)Hooked_sendto);
+    FlushInstructionCache(GetCurrentProcess(), g_sendtoAddr, JMP_SIZE);
+
+    VirtualProtect(g_sendtoAddr, JMP_SIZE, oldProtect, &oldProtect);
+
+    g_hookInstalled = TRUE;
+    OutputDebugStringA("[war3hook] Inline hook on sendto installed successfully!\n");
     return TRUE;
 }
 
 void Hook_Uninstall(void)
 {
-    if (g_iatSlot && g_originalSendto) {
-        DWORD oldProtect;
-        VirtualProtect(g_iatSlot, sizeof(void*), PAGE_READWRITE, &oldProtect);
-        *g_iatSlot = g_originalSendto;
-        VirtualProtect(g_iatSlot, sizeof(void*), oldProtect, &oldProtect);
-        OutputDebugStringA("[war3hook] sendto hook removed\n");
+    if (!g_hookInstalled || !g_sendtoAddr) return;
+
+    /* Restore original bytes */
+    DWORD oldProtect;
+    VirtualProtect(g_sendtoAddr, JMP_SIZE, PAGE_EXECUTE_READWRITE, &oldProtect);
+    memcpy(g_sendtoAddr, g_originalBytes, JMP_SIZE);
+    FlushInstructionCache(GetCurrentProcess(), g_sendtoAddr, JMP_SIZE);
+    VirtualProtect(g_sendtoAddr, JMP_SIZE, oldProtect, &oldProtect);
+
+    /* Free trampoline */
+    if (g_trampoline) {
+        VirtualFree(g_trampoline, 0, MEM_RELEASE);
+        g_trampoline = NULL;
     }
-    g_iatSlot = NULL;
-    g_originalSendto = NULL;
+
+    g_trampolineFn = NULL;
+    g_sendtoAddr = NULL;
+    g_hookInstalled = FALSE;
+
+    OutputDebugStringA("[war3hook] Inline hook removed, sendto restored\n");
 }

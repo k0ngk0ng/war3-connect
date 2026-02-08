@@ -4,10 +4,10 @@
 #include <winsock2.h>
 #include <windows.h>
 
-/* Install IAT hook on sendto in the main module */
+/* Install inline hook on ws2_32.dll!sendto */
 BOOL Hook_Install(void);
 
-/* Restore original sendto */
+/* Restore original sendto bytes */
 void Hook_Uninstall(void);
 
 #endif /* HOOK_H */
