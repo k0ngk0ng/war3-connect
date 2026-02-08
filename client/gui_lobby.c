@@ -4,7 +4,6 @@
  * Shows a list of rooms with create / join / refresh controls.
  */
 
-#define CJSON_HIDE_SYMBOLS
 #include <winsock2.h>
 #include <windows.h>
 #include <commctrl.h>

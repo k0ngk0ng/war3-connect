@@ -5,7 +5,6 @@
  * On successful login the page switches to the lobby view.
  */
 
-#define CJSON_HIDE_SYMBOLS
 #include <winsock2.h>
 #include <windows.h>
 #include <stdio.h>

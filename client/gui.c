@@ -6,7 +6,6 @@
  * to the appropriate page handler.
  */
 
-#define CJSON_HIDE_SYMBOLS
 #include <winsock2.h>
 #include <windows.h>
 #include <commctrl.h>
@@ -32,7 +31,6 @@ static const wchar_t *WINDOW_TITLE = L"War3 \x5BF9\x6218\x5E73\x53F0";
 
 #define WINDOW_W  800
 #define WINDOW_H  600
-#define HEARTBEAT_INTERVAL_MS  15000
 
 /* ------------------------------------------------------------------ */
 /*  Forward declarations                                              */
