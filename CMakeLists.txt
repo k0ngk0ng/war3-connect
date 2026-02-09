@@ -44,6 +44,7 @@ if(WIN32)
     add_executable(war3-platform WIN32
         client/main.c
         client/gui.c
+        client/gui_style.c
         client/gui_login.c
         client/gui_lobby.c
         client/gui_room.c

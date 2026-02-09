@@ -78,7 +78,7 @@ cmake --build build --target war3-lobby-server
 # 默认监听端口 12000
 ./war3-lobby-server
 
-# 指定端口
+# 自定义端口（例如 8888）
 ./war3-lobby-server 8888
 ```
 

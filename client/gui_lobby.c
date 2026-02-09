@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include "gui.h"
+#include "gui_style.h"
 #include "resource.h"
 #include "net_client.h"
 #include "../common/message.h"
@@ -22,6 +23,7 @@
 /* ------------------------------------------------------------------ */
 
 static HWND s_hwndPanel       = NULL;
+static HWND s_lblHeader       = NULL;   /* "游戏大厅" header */
 static HWND s_listRooms       = NULL;   /* ListView */
 static HWND s_btnRefresh      = NULL;
 static HWND s_lblRoomName     = NULL;
@@ -30,8 +32,6 @@ static HWND s_lblMaxPlayers   = NULL;
 static HWND s_editMaxPlayers  = NULL;
 static HWND s_btnCreate       = NULL;
 static HWND s_btnJoin         = NULL;
-
-static HFONT s_hFont          = NULL;
 
 /* ------------------------------------------------------------------ */
 /*  Forward declarations                                              */
@@ -57,7 +57,7 @@ HWND LobbyPage_Create(HWND hwndParent, HINSTANCE hInst)
             .lpfnWndProc   = LobbyPanelProc,
             .hInstance     = hInst,
             .hCursor       = LoadCursor(NULL, IDC_ARROW),
-            .hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1),
+            .hbrBackground = NULL,  /* We paint our own background */
             .lpszClassName = cls,
         };
         RegisterClassExW(&wc);
@@ -70,18 +70,31 @@ HWND LobbyPage_Create(HWND hwndParent, HINSTANCE hInst)
         0, 0, 0, 0,
         hwndParent, NULL, hInst, NULL);
 
+    /* ── Header label ──────────────────────────────────────────────── */
+    /* L"游戏大厅" */
+    s_lblHeader = CreateWindowExW(0, L"STATIC",
+        L"\x6E38\x620F\x5927\x5385",
+        WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE,
+        0, 0, 0, 0,
+        s_hwndPanel, (HMENU)IDC_STATIC, hInst, NULL);
+
     /* ── ListView for rooms ───────────────────────────────────────── */
-    s_listRooms = CreateWindowExW(WS_EX_CLIENTEDGE,
+    s_listRooms = CreateWindowExW(0,
         WC_LISTVIEWW, L"",
         WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL |
-        LVS_SHOWSELALWAYS | LVS_NOSORTHEADER,
+        LVS_SHOWSELALWAYS | LVS_NOSORTHEADER | WS_BORDER,
         0, 0, 0, 0,
         s_hwndPanel, (HMENU)IDC_LIST_ROOMS, hInst, NULL);
 
     ListView_SetExtendedListViewStyle(s_listRooms,
-        LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
+        LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
 
-    /* Columns: 房间名 | 人数 | 最大人数 */
+    /* Dark theme colors for ListView. */
+    ListView_SetBkColor(s_listRooms, CLR_LIST_BG);
+    ListView_SetTextBkColor(s_listRooms, CLR_LIST_BG);
+    ListView_SetTextColor(s_listRooms, CLR_LIST_TEXT);
+
+    /* Columns */
     LVCOLUMNW col = {0};
     col.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_FMT;
     col.fmt  = LVCFMT_LEFT;
@@ -151,20 +164,21 @@ HWND LobbyPage_Create(HWND hwndParent, HINSTANCE hInst)
         0, 0, 0, 0,
         s_hwndPanel, (HMENU)IDC_BTN_JOIN_ROOM, hInst, NULL);
 
-    /* ── Font ─────────────────────────────────────────────────────── */
-    s_hFont = CreateFontW(
-        -14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
-        L"\x5FAE\x8F6F\x96C5\x9ED1");  /* L"微软雅黑" */
-    if (!s_hFont)
-        s_hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+    /* ── Apply theme fonts ─────────────────────────────────────────── */
+    SendMessage(s_lblHeader,      WM_SETFONT, (WPARAM)g_theme.fontSubtitle, TRUE);
+    SendMessage(s_listRooms,      WM_SETFONT, (WPARAM)g_theme.fontBody, TRUE);
+    SendMessage(s_btnRefresh,     WM_SETFONT, (WPARAM)g_theme.fontBtn, TRUE);
+    SendMessage(s_lblRoomName,    WM_SETFONT, (WPARAM)g_theme.fontBody, TRUE);
+    SendMessage(s_editRoomName,   WM_SETFONT, (WPARAM)g_theme.fontBody, TRUE);
+    SendMessage(s_lblMaxPlayers,  WM_SETFONT, (WPARAM)g_theme.fontBody, TRUE);
+    SendMessage(s_editMaxPlayers, WM_SETFONT, (WPARAM)g_theme.fontBody, TRUE);
+    SendMessage(s_btnCreate,      WM_SETFONT, (WPARAM)g_theme.fontBtn, TRUE);
+    SendMessage(s_btnJoin,        WM_SETFONT, (WPARAM)g_theme.fontBtn, TRUE);
 
-    HWND ctrls[] = { s_listRooms, s_btnRefresh, s_lblRoomName,
-                     s_editRoomName, s_lblMaxPlayers, s_editMaxPlayers,
-                     s_btnCreate, s_btnJoin };
-    for (int i = 0; i < (int)(sizeof(ctrls)/sizeof(ctrls[0])); i++)
-        SendMessage(ctrls[i], WM_SETFONT, (WPARAM)s_hFont, TRUE);
+    /* Owner-draw buttons. */
+    Style_SetButton(s_btnCreate,  BTN_STYLE_PRIMARY);
+    Style_SetButton(s_btnJoin,    BTN_STYLE_SECONDARY);
+    Style_SetButton(s_btnRefresh, BTN_STYLE_SECONDARY);
 
     return s_hwndPanel;
 }
@@ -177,15 +191,22 @@ void LobbyPage_OnSize(int cx, int cy)
 {
     if (!s_hwndPanel) return;
 
-    int margin   = 12;
-    int btn_h    = 30;
-    int edit_h   = 26;
-    int row2_y   = cy - margin - btn_h;
-    int row1_y   = row2_y - 6 - btn_h;
-    int list_h   = row1_y - margin - 6;
+    int margin   = 16;
+    int header_h = 32;
+    int btn_h    = 32;
+    int edit_h   = 28;
+    int gap      = 8;
 
-    /* Room list fills the top area. */
-    MoveWindow(s_listRooms, margin, margin,
+    /* Header */
+    MoveWindow(s_lblHeader, margin, margin, cx - 2 * margin, header_h, TRUE);
+
+    int row2_y   = cy - margin - btn_h;
+    int row1_y   = row2_y - gap - btn_h;
+    int list_top = margin + header_h + gap;
+    int list_h   = row1_y - list_top - gap;
+
+    /* Room list fills the main area. */
+    MoveWindow(s_listRooms, margin, list_top,
                cx - 2 * margin, list_h, TRUE);
 
     /* Row 1: room name + max players + create button */
@@ -194,7 +215,7 @@ void LobbyPage_OnSize(int cx, int cy)
     int edit_room_w = 180;
     int lbl_max_w = 80;
     int edit_max_w = 50;
-    int btn_create_w = 90;
+    int btn_create_w = 100;
 
     MoveWindow(s_lblRoomName, x, row1_y + 3, lbl_w, edit_h, TRUE);
     x += lbl_w + 4;
@@ -207,7 +228,7 @@ void LobbyPage_OnSize(int cx, int cy)
     MoveWindow(s_btnCreate, x, row1_y, btn_create_w, btn_h, TRUE);
 
     /* Row 2: refresh + join */
-    int btn_w = 90;
+    int btn_w = 100;
     x = margin;
     MoveWindow(s_btnRefresh, x, row2_y, btn_w, btn_h, TRUE);
     x += btn_w + 10;
@@ -239,7 +260,6 @@ void LobbyPage_HandleMessage(const char *type, void *json_root)
     cJSON *root = (cJSON *)json_root;
 
     if (strcmp(type, MSG_ROOM_LIST_RES) == 0) {
-        /* Clear the list. */
         ListView_DeleteAllItems(s_listRooms);
 
         cJSON *rooms = cJSON_GetObjectItem(root, "rooms");
@@ -253,7 +273,6 @@ void LobbyPage_HandleMessage(const char *type, void *json_root)
             cJSON *jcnt  = cJSON_GetObjectItem(room, "players");
             cJSON *jmax  = cJSON_GetObjectItem(room, "max");
 
-            /* Convert room name from UTF-8 to wide. */
             const char *name_utf8 = (jname && cJSON_IsString(jname))
                                     ? jname->valuestring : "???";
             wchar_t wname[128] = {0};
@@ -266,7 +285,6 @@ void LobbyPage_HandleMessage(const char *type, void *json_root)
             lvi.lParam  = (jid && cJSON_IsNumber(jid)) ? jid->valueint : 0;
             SendMessageW(s_listRooms, LVM_INSERTITEMW, 0, (LPARAM)&lvi);
 
-            /* Player count column. */
             wchar_t wbuf[32];
             int cnt = (jcnt && cJSON_IsNumber(jcnt)) ? jcnt->valueint : 0;
             wsprintfW(wbuf, L"%d", cnt);
@@ -275,7 +293,6 @@ void LobbyPage_HandleMessage(const char *type, void *json_root)
             lvi.pszText  = wbuf;
             SendMessageW(s_listRooms, LVM_SETITEMW, 0, (LPARAM)&lvi);
 
-            /* Max players column. */
             int maxp = (jmax && cJSON_IsNumber(jmax)) ? jmax->valueint : 0;
             wsprintfW(wbuf, L"%d", maxp);
             lvi.iSubItem = 2;
@@ -287,7 +304,6 @@ void LobbyPage_HandleMessage(const char *type, void *json_root)
     }
     else if (strcmp(type, MSG_ROOM_CREATED) == 0 ||
              strcmp(type, MSG_ROOM_JOINED) == 0) {
-        /* Extract room info and switch to room page. */
         cJSON *jid   = cJSON_GetObjectItem(root, "room_id");
         cJSON *jname = cJSON_GetObjectItem(root, "name");
 
@@ -313,7 +329,6 @@ static void OnRefreshClicked(void)
 
 static void OnCreateClicked(void)
 {
-    /* Read room name. */
     wchar_t wname[128] = {0};
     GetWindowTextW(s_editRoomName, wname, 128);
     char name[128] = {0};
@@ -321,14 +336,12 @@ static void OnCreateClicked(void)
                         NULL, NULL);
 
     if (strlen(name) == 0) {
-        /* L"请输入房间名" */
         MessageBoxW(g_app.hwndMain,
                     L"\x8BF7\x8F93\x5165\x623F\x95F4\x540D",
                     L"\x63D0\x793A", MB_OK | MB_ICONWARNING);
         return;
     }
 
-    /* Read max players. */
     wchar_t wmax[16] = {0};
     GetWindowTextW(s_editMaxPlayers, wmax, 16);
     int max_players = _wtoi(wmax);
@@ -349,17 +362,14 @@ static void OnCreateClicked(void)
 
 static void OnJoinClicked(void)
 {
-    /* Get selected room. */
     int sel = ListView_GetNextItem(s_listRooms, -1, LVNI_SELECTED);
     if (sel < 0) {
-        /* L"请先选择一个房间" */
         MessageBoxW(g_app.hwndMain,
                     L"\x8BF7\x5148\x9009\x62E9\x4E00\x4E2A\x623F\x95F4",
                     L"\x63D0\x793A", MB_OK | MB_ICONWARNING);
         return;
     }
 
-    /* Get room_id from lParam. */
     LVITEMW lvi = {0};
     lvi.mask  = LVIF_PARAM;
     lvi.iItem = sel;
@@ -405,6 +415,49 @@ static LRESULT CALLBACK LobbyPanelProc(HWND hwnd, UINT msg,
             OnJoinClicked();
             return 0;
         }
+        /* Custom draw for ListView header dark theme. */
+        if (nm->idFrom == IDC_LIST_ROOMS && nm->code == NM_CUSTOMDRAW) {
+            NMLVCUSTOMDRAW *cd = (NMLVCUSTOMDRAW *)lParam;
+            switch (cd->nmcd.dwDrawStage) {
+            case CDDS_PREPAINT:
+                return CDRF_NOTIFYITEMDRAW;
+            case CDDS_ITEMPREPAINT:
+                cd->clrText   = CLR_LIST_TEXT;
+                cd->clrTextBk = CLR_LIST_BG;
+                return CDRF_NEWFONT;
+            }
+        }
+        break;
+    }
+
+    case WM_ERASEBKGND:
+        return 1;
+
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+        RECT rc;
+        GetClientRect(hwnd, &rc);
+        Style_FillPanel(hdc, &rc);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+
+    case WM_CTLCOLORSTATIC: {
+        HDC hdc = (HDC)wParam;
+        HWND hCtl = (HWND)lParam;
+        SetBkMode(hdc, TRANSPARENT);
+        if (hCtl == s_lblHeader) {
+            SetTextColor(hdc, CLR_TEXT_ACCENT);
+        } else {
+            SetTextColor(hdc, CLR_TEXT_PRIMARY);
+        }
+        return (LRESULT)g_theme.brBgPanel;
+    }
+
+    case WM_CTLCOLOREDIT: {
+        HBRUSH br = Style_OnCtlColor(msg, (HDC)wParam, (HWND)lParam);
+        if (br) return (LRESULT)br;
         break;
     }
     }

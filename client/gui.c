@@ -14,6 +14,7 @@
 #include <string.h>
 
 #include "gui.h"
+#include "gui_style.h"
 #include "resource.h"
 #include "net_client.h"
 #include "../common/message.h"
@@ -48,6 +49,9 @@ BOOL GUI_Init(HINSTANCE hInstance)
     memset(&g_app, 0, sizeof(g_app));
     g_app.hInstance = hInstance;
 
+    /* Initialise the visual theme (cached brushes & fonts). */
+    Style_Init();
+
     /* Initialise Common Controls (for ListView etc.). */
     INITCOMMONCONTROLSEX icc = {
         .dwSize = sizeof(icc),
@@ -62,7 +66,7 @@ BOOL GUI_Init(HINSTANCE hInstance)
         .lpfnWndProc   = MainWndProc,
         .hInstance     = hInstance,
         .hCursor       = LoadCursor(NULL, IDC_ARROW),
-        .hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1),
+        .hbrBackground = g_theme.brBgMain,
         .lpszClassName = CLASS_NAME,
         .hIcon         = LoadIcon(NULL, IDI_APPLICATION),
         .hIconSm       = LoadIcon(NULL, IDI_APPLICATION),
@@ -280,9 +284,19 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg,
          * here via DefWindowProc, but we also handle some directly. */
         break;
 
+    /* Dark-theme color handling for child controls. */
+    case WM_CTLCOLORSTATIC:
+    case WM_CTLCOLOREDIT:
+    case WM_CTLCOLORLISTBOX: {
+        HBRUSH br = Style_OnCtlColor(msg, (HDC)wParam, (HWND)lParam);
+        if (br) return (LRESULT)br;
+        break;
+    }
+
     case WM_DESTROY:
         KillTimer(hwnd, IDT_HEARTBEAT);
         NetClient_Disconnect();
+        Style_Cleanup();
         PostQuitMessage(0);
         return 0;
     }

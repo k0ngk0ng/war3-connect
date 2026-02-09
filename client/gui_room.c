@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include "gui.h"
+#include "gui_style.h"
 #include "resource.h"
 #include "net_client.h"
 #include "game_launcher.h"
@@ -30,8 +31,6 @@ static HWND s_editChat        = NULL;   /* Edit    – chat input       */
 static HWND s_btnSend         = NULL;
 static HWND s_btnStartGame    = NULL;
 static HWND s_btnLeave        = NULL;
-
-static HFONT s_hFont          = NULL;
 
 /* Peer IP cache for game launcher. */
 #define MAX_PEERS 16
@@ -64,7 +63,7 @@ HWND RoomPage_Create(HWND hwndParent, HINSTANCE hInst)
             .lpfnWndProc   = RoomPanelProc,
             .hInstance     = hInst,
             .hCursor       = LoadCursor(NULL, IDC_ARROW),
-            .hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1),
+            .hbrBackground = NULL,  /* We paint our own background */
             .lpszClassName = cls,
         };
         RegisterClassExW(&wc);
@@ -128,28 +127,19 @@ HWND RoomPage_Create(HWND hwndParent, HINSTANCE hInst)
         0, 0, 0, 0,
         s_hwndPanel, (HMENU)IDC_BTN_LEAVE_ROOM, hInst, NULL);
 
-    /* ── Font ─────────────────────────────────────────────────────── */
-    s_hFont = CreateFontW(
-        -14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
-        L"\x5FAE\x8F6F\x96C5\x9ED1");  /* L"微软雅黑" */
-    if (!s_hFont)
-        s_hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+    /* ── Apply theme fonts ─────────────────────────────────────────── */
+    SendMessage(s_lblRoomName,  WM_SETFONT, (WPARAM)g_theme.fontSubtitle, TRUE);
+    SendMessage(s_listPlayers,  WM_SETFONT, (WPARAM)g_theme.fontBody, TRUE);
+    SendMessage(s_listChat,     WM_SETFONT, (WPARAM)g_theme.fontBody, TRUE);
+    SendMessage(s_editChat,     WM_SETFONT, (WPARAM)g_theme.fontBody, TRUE);
+    SendMessage(s_btnSend,      WM_SETFONT, (WPARAM)g_theme.fontBtn, TRUE);
+    SendMessage(s_btnStartGame, WM_SETFONT, (WPARAM)g_theme.fontBtn, TRUE);
+    SendMessage(s_btnLeave,     WM_SETFONT, (WPARAM)g_theme.fontBtn, TRUE);
 
-    HWND ctrls[] = { s_lblRoomName, s_listPlayers, s_listChat,
-                     s_editChat, s_btnSend, s_btnStartGame, s_btnLeave };
-    for (int i = 0; i < (int)(sizeof(ctrls)/sizeof(ctrls[0])); i++)
-        SendMessage(ctrls[i], WM_SETFONT, (WPARAM)s_hFont, TRUE);
-
-    /* Use a slightly larger bold font for the room name label. */
-    HFONT hBold = CreateFontW(
-        -18, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
-        L"\x5FAE\x8F6F\x96C5\x9ED1");
-    if (hBold)
-        SendMessage(s_lblRoomName, WM_SETFONT, (WPARAM)hBold, TRUE);
+    /* Owner-draw buttons. */
+    Style_SetButton(s_btnStartGame, BTN_STYLE_PRIMARY);
+    Style_SetButton(s_btnSend,      BTN_STYLE_SECONDARY);
+    Style_SetButton(s_btnLeave,     BTN_STYLE_DANGER);
 
     return s_hwndPanel;
 }
@@ -162,11 +152,11 @@ void RoomPage_OnSize(int cx, int cy)
 {
     if (!s_hwndPanel) return;
 
-    int margin    = 12;
-    int top_h     = 32;       /* room name bar height */
-    int btn_h     = 30;
-    int edit_h    = 26;
-    int gap       = 6;
+    int margin    = 16;
+    int top_h     = 32;
+    int btn_h     = 32;
+    int edit_h    = 28;
+    int gap       = 8;
 
     /* Top bar: room name */
     MoveWindow(s_lblRoomName, margin, margin, cx - 2 * margin, top_h, TRUE);
@@ -174,7 +164,8 @@ void RoomPage_OnSize(int cx, int cy)
     int content_y = margin + top_h + gap;
     int bottom_row_h = btn_h;
     int input_row_h  = edit_h;
-    int content_h = cy - content_y - margin - bottom_row_h - gap - input_row_h - gap;
+    int content_h = cy - content_y - margin - bottom_row_h - gap
+                    - input_row_h - gap;
 
     /* Left 1/3: player list */
     int left_w = (cx - 2 * margin - gap) / 3;
@@ -185,17 +176,17 @@ void RoomPage_OnSize(int cx, int cy)
     int right_w = cx - right_x - margin;
     MoveWindow(s_listChat, right_x, content_y, right_w, content_h, TRUE);
 
-    /* Chat input row (below chat list) */
+    /* Chat input row */
     int input_y = content_y + content_h + gap;
-    int btn_send_w = 70;
+    int btn_send_w = 80;
     MoveWindow(s_editChat, right_x, input_y,
                right_w - btn_send_w - gap, edit_h, TRUE);
     MoveWindow(s_btnSend, right_x + right_w - btn_send_w, input_y,
-               btn_send_w, edit_h, TRUE);
+               btn_send_w, edit_h + 4, TRUE);
 
     /* Bottom button row */
     int btn_y = input_y + input_row_h + gap;
-    int btn_w = 100;
+    int btn_w = 110;
     int x = margin;
     MoveWindow(s_btnStartGame, x, btn_y, btn_w, btn_h, TRUE);
     x += btn_w + 10;
@@ -221,7 +212,7 @@ void RoomPage_ClearAll(void)
     /* Update room name label. */
     if (s_lblRoomName) {
         wchar_t wname[128] = {0};
-        /* L"房间: " prefix */
+        /* L"房间: " */
         wchar_t prefix[] = L"\x623F\x95F4\xFF1A ";
         wcscpy(wname, prefix);
         if (g_app.current_room_name[0]) {
@@ -260,14 +251,12 @@ void RoomPage_HandleMessage(const char *type, void *json_root)
             const char *ip    = (jip && cJSON_IsString(jip))
                                 ? jip->valuestring : "";
 
-            /* Add to player listbox. */
             wchar_t wline[128] = {0};
             wchar_t wuser[64] = {0};
             MultiByteToWideChar(CP_UTF8, 0, uname, -1, wuser, 64);
             wsprintfW(wline, L"%s", wuser);
             SendMessageW(s_listPlayers, LB_ADDSTRING, 0, (LPARAM)wline);
 
-            /* Cache peer IP (skip self). */
             if (strcmp(uname, g_app.username) != 0 &&
                 s_peer_count < MAX_PEERS && strlen(ip) > 0) {
                 strncpy(s_peer_ips[s_peer_count], ip,
@@ -286,7 +275,6 @@ void RoomPage_HandleMessage(const char *type, void *json_root)
         const char *text = (jmsg && cJSON_IsString(jmsg))
                            ? jmsg->valuestring : "";
 
-        /* Build "from: text" wide string. */
         char line[512];
         snprintf(line, sizeof(line), "%s: %s", from, text);
         wchar_t wline[512] = {0};
@@ -299,7 +287,6 @@ void RoomPage_HandleMessage(const char *type, void *json_root)
         const char *uname = (juser && cJSON_IsString(juser))
                             ? juser->valuestring : "???";
 
-        /* System message: "xxx 加入了房间" */
         char line[256];
         snprintf(line, sizeof(line), "*** %s \xe5\x8a\xa0\xe5\x85\xa5"
                  "\xe4\xba\x86\xe6\x88\xbf\xe9\x97\xb4 ***", uname);
@@ -313,7 +300,6 @@ void RoomPage_HandleMessage(const char *type, void *json_root)
         const char *uname = (juser && cJSON_IsString(juser))
                             ? juser->valuestring : "???";
 
-        /* System message: "xxx 离开了房间" */
         char line[256];
         snprintf(line, sizeof(line), "*** %s \xe7\xa6\xbb\xe5\xbc\x80"
                  "\xe4\xba\x86\xe6\x88\xbf\xe9\x97\xb4 ***", uname);
@@ -337,7 +323,6 @@ void RoomPage_HandleMessage(const char *type, void *json_root)
 static void AppendChatW(const wchar_t *line)
 {
     SendMessageW(s_listChat, LB_ADDSTRING, 0, (LPARAM)line);
-    /* Auto-scroll to bottom. */
     int count = (int)SendMessageW(s_listChat, LB_GETCOUNT, 0, 0);
     if (count > 0)
         SendMessageW(s_listChat, LB_SETTOPINDEX, count - 1, 0);
@@ -345,7 +330,6 @@ static void AppendChatW(const wchar_t *line)
 
 static void AppendChatSystemW(const wchar_t *line)
 {
-    /* System messages are displayed the same way, just with *** markers. */
     AppendChatW(line);
 }
 
@@ -381,7 +365,6 @@ static void OnSendClicked(void)
 static void OnStartGameClicked(void)
 {
     if (s_peer_count == 0) {
-        /* L"房间内没有其他玩家" */
         MessageBoxW(g_app.hwndMain,
                     L"\x623F\x95F4\x5185\x6CA1\x6709\x5176\x4ED6"
                     L"\x73A9\x5BB6",
@@ -397,14 +380,12 @@ static void OnStartGameClicked(void)
                        ? g_app.war3_path : NULL;
 
     if (!GameLauncher_Start(ips, s_peer_count, war3)) {
-        /* L"启动游戏失败，请检查 war3.exe 和 war3hook.dll 是否存在" */
         MessageBoxW(g_app.hwndMain,
                     L"\x542F\x52A8\x6E38\x620F\x5931\x8D25\xFF0C"
                     L"\x8BF7\x68C0\x67E5 war3.exe \x548C "
                     L"war3hook.dll \x662F\x5426\x5B58\x5728",
                     L"\x9519\x8BEF", MB_OK | MB_ICONERROR);
     } else {
-        /* L"游戏已启动！" */
         AppendChatW(L"*** \x6E38\x620F\x5DF2\x542F\x52A8\xFF01 ***");
     }
 }
@@ -441,18 +422,53 @@ static LRESULT CALLBACK RoomPanelProc(HWND hwnd, UINT msg,
             if (HIWORD(wParam) == BN_CLICKED) { OnLeaveClicked(); return 0; }
             break;
         case IDC_EDIT_CHAT:
-            /* Allow Enter key to send chat. */
             break;
         }
         break;
 
-    /* Handle Enter key in the chat edit box. */
     case WM_KEYDOWN:
         if (wParam == VK_RETURN && GetFocus() == s_editChat) {
             OnSendClicked();
             return 0;
         }
         break;
+
+    case WM_ERASEBKGND:
+        return 1;
+
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+        RECT rc;
+        GetClientRect(hwnd, &rc);
+        Style_FillPanel(hdc, &rc);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+
+    case WM_CTLCOLORSTATIC: {
+        HDC hdc = (HDC)wParam;
+        HWND hCtl = (HWND)lParam;
+        SetBkMode(hdc, TRANSPARENT);
+        if (hCtl == s_lblRoomName) {
+            SetTextColor(hdc, CLR_TEXT_ACCENT);
+        } else {
+            SetTextColor(hdc, CLR_TEXT_PRIMARY);
+        }
+        return (LRESULT)g_theme.brBgPanel;
+    }
+
+    case WM_CTLCOLOREDIT: {
+        HBRUSH br = Style_OnCtlColor(msg, (HDC)wParam, (HWND)lParam);
+        if (br) return (LRESULT)br;
+        break;
+    }
+
+    case WM_CTLCOLORLISTBOX: {
+        HBRUSH br = Style_OnCtlColor(msg, (HDC)wParam, (HWND)lParam);
+        if (br) return (LRESULT)br;
+        break;
+    }
     }
 
     return DefWindowProcW(hwnd, msg, wParam, lParam);
