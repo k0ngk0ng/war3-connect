@@ -1,5 +1,0 @@
-/Users/chenj/Sources/github.com/k0ngk0ng/war3-connect/build-test/CMakeFiles/cjson.dir
-/Users/chenj/Sources/github.com/k0ngk0ng/war3-connect/build-test/CMakeFiles/common.dir
-/Users/chenj/Sources/github.com/k0ngk0ng/war3-connect/build-test/CMakeFiles/war3-lobby-server.dir
-/Users/chenj/Sources/github.com/k0ngk0ng/war3-connect/build-test/CMakeFiles/edit_cache.dir
-/Users/chenj/Sources/github.com/k0ngk0ng/war3-connect/build-test/CMakeFiles/rebuild_cache.dir
