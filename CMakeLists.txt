@@ -73,14 +73,3 @@ if(WIN32)
     set_target_properties(war3hook PROPERTIES PREFIX "")
 endif()
 
-# ══════════════════════════════════════════════════════════════════════
-#  (Legacy) Old standalone launcher – kept for reference
-# ══════════════════════════════════════════════════════════════════════
-if(WIN32 AND EXISTS "${CMAKE_SOURCE_DIR}/src/launcher/main.c")
-    add_executable(war3-connect-legacy
-        src/launcher/main.c
-        src/launcher/injector.c
-    )
-    target_link_libraries(war3-connect-legacy PRIVATE ws2_32)
-    set_target_properties(war3-connect-legacy PROPERTIES EXCLUDE_FROM_ALL TRUE)
-endif()
